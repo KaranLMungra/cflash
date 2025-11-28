@@ -11,39 +11,33 @@
 #define TCP_PROTOCOL 0x06
 #define TCP_ADDR 0x0
 #define TCP_PORT 8000
-#define TCP_BACKLOG 32
+#define TCP_BACKLOG 1024
 #define BUFF_SIZE 512
 #define STACK_SIZE 8192
-#define NUM_THREADS 21
+#define NUM_THREADS 100
+#define WORKER_THREADS 100
 
 struct thread_info {   /* Used as argument to thread_start() */
   pthread_t thread_id; /* ID returned by pthread_create() */
   int sd;              /* Socket descriptor */
-  int closed;
 };
 
 const char *CONTENT_200 =
     "HTTP/1.1 200 OK\r\nServer: Server/1.0\r\nContent-Language: "
-    "en\r\nContent-Length: 13\r\nContent-Type: text/plain\r\n\r\nHello, World!";
-#define CONTENT_200_LEN 120
-const char *CONTENT_400 =
-    "HTTP/1.1 400 Bad Request\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_400_LEN 48
+    "en\r\nContent-Length: 13\r\nConnection: close\r\nContent-Type: "
+    "text/plain\r\n\r\nHello, World!";
+const char *CONTENT_400 = "HTTP/1.1 400 Bad Request\r\nServer: "
+                          "Server/1.0\r\nConnection: close\r\n\r\n";
 const char *CONTENT_404 =
-    "HTTP/1.1 404 Not Found\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_404_LEN 46
-const char *CONTENT_405 =
-    "HTTP/1.1 405 Method Not Allowed\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_405_LEN 55
-const char *CONTENT_500 =
-    "HTTP/1.1 500 Internal Server Error\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_500_LEN 58
-const char *CONTENT_503 =
-    "HTTP/1.1 503 Service Unavailable\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_503_LEN 56
-const char *CONTENT_505 =
-    "HTTP/1.1 505 HTTP Version not supported\r\nServer: Server/1.0\r\n\r\n";
-#define CONTENT_505_LEN 63
+    "HTTP/1.1 404 Not Found\r\nServer: Server/1.0\r\nConnection: close\r\n\r\n";
+const char *CONTENT_405 = "HTTP/1.1 405 Method Not Allowed\r\nServer: "
+                          "Server/1.0\r\nConnection: close\r\n\r\n";
+const char *CONTENT_500 = "HTTP/1.1 500 Internal Server Error\r\nServer: "
+                          "Server/1.0\r\nConnection: close\r\n\r\n";
+const char *CONTENT_503 = "HTTP/1.1 503 Service Unavailable\r\nServer: "
+                          "Server/1.0\r\nConnection: close\r\n\r\n";
+const char *CONTENT_505 = "HTTP/1.1 505 HTTP Version not supported\r\nServer: "
+                          "Server/1.0\r\nConnection: close\r\n\r\n";
 
 enum ECHO_SERVER_ERRORS {
   FAILED_SOCKET_CLOSE = -8,
@@ -182,56 +176,66 @@ void handle_response(int sd, int ret, enum ECHO_SERVER_ERRORS server_errno) {
 int handle_http_status(int sd, int status) {
   switch (status) {
   case 200:
-    return write(sd, CONTENT_200, CONTENT_200_LEN);
+    return write(sd, CONTENT_200, strlen(CONTENT_200));
   case 400:
-    return write(sd, CONTENT_400, CONTENT_400_LEN);
+    return write(sd, CONTENT_400, strlen(CONTENT_400));
   case 404:
-    return write(sd, CONTENT_404, CONTENT_404_LEN);
+    return write(sd, CONTENT_404, strlen(CONTENT_404));
   case 405:
-    return write(sd, CONTENT_405, CONTENT_405_LEN);
+    return write(sd, CONTENT_405, strlen(CONTENT_405));
   case 503:
-    return write(sd, CONTENT_503, CONTENT_503_LEN);
+    return write(sd, CONTENT_503, strlen(CONTENT_503));
   case 505:
-    return write(sd, CONTENT_505, CONTENT_505_LEN);
+    return write(sd, CONTENT_505, strlen(CONTENT_505));
   default:
     fprintf(stderr, "Status code = %d, not supported yet.", status);
-    return write(sd, CONTENT_500, CONTENT_500_LEN);
+    return write(sd, CONTENT_500, strlen(CONTENT_500));
   }
 }
 
 void *handle_conn(void *arg) {
+
   char buffer[BUFF_SIZE];
   struct thread_info *info = (struct thread_info *)arg;
-  int cd = info->sd;
-  memset(buffer, 0, BUFF_SIZE);
-  int read_bytes = read(cd, buffer, BUFF_SIZE - 1);
-  if (read_bytes == 0) {
-  } else if (read_bytes == -1) {
-    fprintf(stderr, "Failed to read from tcp socket, due to error %s\n",
-            strerror(errno));
-  } else {
-    buffer[read_bytes] = 0;
-    int status = handle_http(buffer, read_bytes);
+  socklen_t addrlen = sizeof(struct sockaddr_in);
 
-    printf("Status code = %d\n", status);
-    if (handle_http_status(cd, status) == -1) {
-      fprintf(stderr, "Failed to write to tcp socket, due to error %s\n",
+  for (;;) {
+    struct sockaddr_in client_addr = {0};
+    int cd = accept(info->sd, (struct sockaddr *)&client_addr, &addrlen);
+    if (cd < 0) {
+      fprintf(stderr, "Failed to accept tcp connection, due to error %s",
+              strerror(errno));
+    }
+    printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
+           ntohs(client_addr.sin_port));
+
+    // TODO: This must be a loop, until we get EOF
+    memset(buffer, 0, BUFF_SIZE);
+    int read_bytes = read(cd, buffer, BUFF_SIZE - 1);
+    if (read_bytes == 0) {
+    } else if (read_bytes == -1) {
+      fprintf(stderr, "Failed to read from tcp socket, due to error %s\n",
+              strerror(errno));
+    } else {
+      buffer[read_bytes] = 0;
+      int status = handle_http(buffer, read_bytes);
+      printf("Status code = %d\n", status);
+      if (handle_http_status(cd, status) == -1) {
+        fprintf(stderr, "Failed to write to tcp socket, due to error %s\n",
+                strerror(errno));
+      }
+    }
+    if (close(cd) == -1) {
+      fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
               strerror(errno));
     }
   }
-  if (close(cd) == -1) {
-    fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
-            strerror(errno));
-  }
-  info->closed = 1;
   return NULL;
 }
 
 int main(void) {
   pthread_attr_t attr = {0};
-  for (int i = 0; i < NUM_THREADS; ++i)
-    tinfo[i].closed = 1;
-
+  void *res;
   int optval = 1;
   printf("Trying to create TCP socket...\n");
   int sd = socket(AF_INET, SOCK_STREAM, TCP_PROTOCOL);
@@ -257,35 +261,19 @@ int main(void) {
          inet_ntoa((struct in_addr){.s_addr = TCP_ADDR}), TCP_PORT);
   handle_response(sd, listen(sd, TCP_BACKLOG), FAILED_SOCKET_LISTEN);
   printf("Listening for incoming connections...\n");
-
-  for (;;) {
-    struct sockaddr_in client_addr = {0};
-    socklen_t addrlen = sizeof(struct sockaddr_in);
-    int cd = accept(sd, (struct sockaddr *)&client_addr, &addrlen);
-    handle_response(cd, cd, FAILED_SOCKET_ACCEPT);
-    printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
-           ntohs(client_addr.sin_port));
-    int found_thread = 0;
-    for (size_t i = 0; i < NUM_THREADS; ++i) {
-      if (tinfo[i].closed) {
-        tinfo[i].closed = 0;
-        tinfo[i].sd = cd;
-        handle_response(sd,
-                        pthread_create((pthread_t *)&tinfo[i].thread_id, &attr,
-                                       &handle_conn, (void *)&tinfo[i]),
-                        UNKNOWN);
-        found_thread = 1;
-        break;
-      }
-    }
-    if (!found_thread) {
-      handle_response(cd, handle_http_status(cd, 503), FAILED_SOCKET_WRITE);
-      handle_response(cd, close(cd), FAILED_SOCKET_CLOSE);
-      continue;
-    }
+  for (size_t i = 0; i < NUM_THREADS; ++i) {
+    tinfo[i].sd = sd;
+    handle_response(sd,
+                    pthread_create(&tinfo[i].thread_id, &attr, &handle_conn,
+                                   (void *)&tinfo[i]),
+                    UNKNOWN);
   }
+
   // TODO: Add signal handler Ctrl+C
   handle_response(sd, pthread_attr_destroy(&attr), UNKNOWN);
+  for (size_t i = 0; i < NUM_THREADS; ++i) {
+    handle_response(sd, pthread_join(tinfo[i].thread_id, &res), UNKNOWN);
+  }
   handle_response(sd, close(sd), FAILED_SOCKET_CLOSE);
   printf("TCP socket closed successfully, socket = %d\n", sd);
   return 0;
