@@ -14,6 +14,8 @@ static const char *HTTP_METHODS_STR[HTTP_METHOD_NUM] = {"GET", "POST"};
 struct HttpHeader {
   char name[HTTP_MAX_BUFFER_SIZE];
   char value[HTTP_MAX_BUFFER_SIZE];
+  size_t name_length;
+  size_t value_length;
 };
 
 enum HttpStatus {
@@ -24,20 +26,20 @@ enum HttpStatus {
 };
 
 struct HttpRequest {
-    int cd;
+  int cd;
   enum HttpMethod method;
   char path[HTTP_MAX_BUFFER_SIZE];
   struct HttpHeader *headers;
   size_t num_headers;
   char body[HTTP_MAX_BUFFER_SIZE];
   size_t body_length;
+  size_t path_length;
 };
 
-void init_http_request(struct HttpRequest *req, int cd);
+void init_http_request(struct HttpRequest *req);
 enum HttpStatus make_http_request(const char *buffer, int buf_len,
                                   struct HttpRequest *req);
 
 void print_http_request(const struct HttpRequest *req);
-void http_free_request(struct HttpRequest* req);
-void reset_http_request(struct HttpRequest *req);
+void http_free_request(struct HttpRequest *req);
 #endif

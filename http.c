@@ -75,38 +75,43 @@ int _extract_path(const char *buffer, int until, struct HttpRequest *req) {
     // TODO: Might need allocations
     return HTTP_INVALID;
   }
-  memset(req->path, 0, HTTP_MAX_BUFFER_SIZE);
+  memcpy(req->path, buffer, until);
+  req->path_length = until;
   return 0;
 }
 
 int _extract_http_header(const char *buffer, int until,
                          struct HttpRequest *req) {
-  int key_end = 0;
-  key_end = _skip_until_colon(key_end, buffer, until);
+  int key_end = _skip_until_colon(0, buffer, until);
   if (key_end == HTTP_INVALID) {
     return HTTP_INVALID;
   }
+
   int curr_header = req->num_headers++;
-  strncpy(req->headers[curr_header].name, buffer, key_end);
-  strncpy(req->headers[curr_header].value, buffer + key_end + 2,
-          until - key_end - 2);
+
+  int name_len = key_end;
+  if (name_len >= HTTP_MAX_BUFFER_SIZE) { // whatever max you defined
+    return HTTP_INVALID;
+  }
+  memcpy(req->headers[curr_header].name, buffer, name_len);
+  req->headers[curr_header].name_length = name_len;
+
+  int value_start = key_end + 2;
+  int value_len = until - value_start;
+  if (value_len < 0 || value_len >= HTTP_MAX_BUFFER_SIZE) {
+    return HTTP_INVALID;
+  }
+  memcpy(req->headers[curr_header].value, buffer + value_start, value_len);
+  req->headers[curr_header].value_length = value_len;
+
   return 0;
 }
 
-void init_http_request(struct HttpRequest *req, int cd) {
-  req->cd = cd;
+void init_http_request(struct HttpRequest *req) {
+  req->cd = 0;
   req->body_length = 0;
   req->num_headers = 0;
   req->headers = calloc(MAX_HEADERS, sizeof(struct HttpHeader));
-}
-
-void reset_http_request(struct HttpRequest *req) {
-  memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
-  memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
-  memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
-  req->body_length = 0;
-  req->num_headers = 0;
-  req->method = 0;
 }
 
 enum HttpStatus make_http_request(const char *buffer, int buf_len,
@@ -146,6 +151,7 @@ enum HttpStatus make_http_request(const char *buffer, int buf_len,
   if (i - j == 0) {
     return HTTP_OK;
   }
+  req->num_headers = 0;
   while (_extract_http_header(buffer + j, i - j, req) != HTTP_INVALID) {
     _HTTP_PARSE_INC_2(i, j);
     i = _skip_until_eol(i, buffer, buf_len);
@@ -158,12 +164,15 @@ enum HttpStatus make_http_request(const char *buffer, int buf_len,
   }
   // Read Body
   _HTTP_PARSE_INC_2(i, j);
-  for (int k = 0; k < req->num_headers; ++k) {
-    if (strcmp(req->headers[k].name, "content-length") == 0) {
-      req->body_length = atoi(req->headers[k].value);
-      memcpy(req->body, buffer + i, req->body_length);
-    }
-  }
+  // for (int k = 0; k < req->num_headers; ++k) {
+  //   if (strcmp(req->headers[k].name, "content-length") == 0) {
+  //     req->body_length = atoi(req->headers[k].value);
+  //     memcpy(req->body, buffer + i, req->body_length);
+  //   }
+  // }
+  // TODO: We are ignoring this header for now, as we are optimizing, need to include later
+  req->body_length = buf_len - i;
+  memcpy(req->body, buffer+i, req->body_length);
   return HTTP_OK;
 }
 
