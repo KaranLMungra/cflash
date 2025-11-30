@@ -39,4 +39,5 @@ enum HttpStatus make_http_request(const char *buffer, int buf_len,
 
 void print_http_request(const struct HttpRequest *req);
 void http_free_request(struct HttpRequest* req);
+void reset_http_request(struct HttpRequest *req);
 #endif

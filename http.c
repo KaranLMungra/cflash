@@ -93,18 +93,24 @@ int _extract_http_header(const char *buffer, int until,
   return 0;
 }
 
-
 void init_http_request(struct HttpRequest *req, int cd) {
-    req->cd = cd;
-    req->body_length = 0;
-    req->num_headers = 0;
-    req->headers = calloc(MAX_HEADERS, sizeof(struct HttpHeader));
+  req->cd = cd;
+  req->body_length = 0;
+  req->num_headers = 0;
+  req->headers = calloc(MAX_HEADERS, sizeof(struct HttpHeader));
+}
+
+void reset_http_request(struct HttpRequest *req) {
+  memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
+  memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  req->body_length = 0;
+  req->num_headers = 0;
+  req->method = 0;
 }
 
 enum HttpStatus make_http_request(const char *buffer, int buf_len,
                                   struct HttpRequest *req) {
-  req->body_length = 0;
-  req->num_headers = 0;
   int i = 0;
   int j = 0;
   i = _skip_until_space(i, buffer, buf_len);
@@ -173,6 +179,4 @@ void print_http_request(const struct HttpRequest *req) {
   }
 }
 
-void http_free_request(struct HttpRequest *req) {
-    free(req->headers);
-}
+void http_free_request(struct HttpRequest *req) { free(req->headers); }

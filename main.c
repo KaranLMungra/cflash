@@ -15,20 +15,49 @@
 #define SERVER_HOST "127.0.0.1"
 #define MAX_BUFFER_SIZE 4096
 #define NUM_EPOLL_EVENTS 10
+static char buffer[MAX_BUFFER_SIZE];
+static struct epoll_event events[NUM_EPOLL_EVENTS] = {0};
+
+struct ServerContext {
+  int epoll;
+  int sd;
+};
+
+void signal_handler(int signal, siginfo_t *info, void *context) {
+  printf("Gracefully  shutdown signal recieved");
+  struct ServerContext *server_context = (struct ServerContext *)context;
+  int epoll = server_context->epoll;
+  int sd = server_context->sd;
+  if (epoll >= 0) {
+    if (close(epoll) < 0) {
+      fprintf(stderr, "Failed to close epoll, due to error %s\n",
+              strerror(errno));
+    }
+  }
+  if (sd >= 0) {
+    if (close(sd) < 0) {
+      fprintf(stderr, "Failed to close socket, due to error %s\n",
+              strerror(errno));
+    }
+  }
+  exit(EXIT_SUCCESS);
+}
 
 int main(void) {
   int sd;
   int err;
   int optval = 1;
   int epoll = epoll_create1(0);
-  static struct epoll_event events[NUM_EPOLL_EVENTS] = {0};
+  struct sigaction act = {0};
+  act.sa_flags = SA_SIGINFO;
+  act.sa_sigaction = &signal_handler;
 
   if (epoll < 0) {
     fprintf(stderr, "Unable to create epoll, due to error %s\n",
             strerror(errno));
     goto exit;
   }
-  char buffer[MAX_BUFFER_SIZE];
+
   sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
   if (sd < 0) {
     fprintf(stderr, "Unable to create socket, due to error %s\n",
@@ -43,6 +72,7 @@ int main(void) {
             strerror(errno));
     goto exit;
   }
+
   struct sockaddr_in addr = {
       .sin_family = AF_INET,
       .sin_port = htons(SERVER_PORT),
@@ -62,6 +92,12 @@ int main(void) {
     goto exit;
   }
   printf("Successfully, listening for incoming connections...\n");
+  struct ServerContext context = {.epoll = epoll, .sd = sd};
+  if (sigaction(SIGINT, &act, (void *)&context) < 0) {
+    fprintf(stderr, "Unable to register signal handler, due to error %s\n",
+            strerror(errno));
+    goto exit;
+  }
   struct sockaddr_in in_addr;
   socklen_t in_addr_len = (socklen_t)sizeof(struct sockaddr_in);
   struct epoll_event ev = {
@@ -72,9 +108,10 @@ int main(void) {
       .tv_sec = 0,
       .tv_nsec = 100000000,
   };
+
   sigset_t ss = {0};
   sigemptyset(&ss);
-  sigaddset(&ss, SIGTERM);
+  sigaddset(&ss, SIGINT);
   epoll_ctl(epoll, EPOLL_CTL_ADD, sd, &ev);
   while (1) {
     int events_ready =
@@ -100,9 +137,9 @@ int main(void) {
         ev.data.ptr = req;
         epoll_ctl(epoll, EPOLL_CTL_ADD, cd, &ev);
       } else {
-        struct HttpRequest *req = (struct HttpRequest *)events[i].data.ptr;
-        int cd = req->cd;
         if ((events[i].events & EPOLLIN) == EPOLLIN) {
+          struct HttpRequest *req = (struct HttpRequest *)events[i].data.ptr;
+          int cd = req->cd;
           memset(buffer, 0, MAX_BUFFER_SIZE);
           int read_bytes = read(cd, buffer, MAX_BUFFER_SIZE - 1);
           if (read_bytes < 0) {
@@ -121,9 +158,12 @@ int main(void) {
               printf("%s:%d%s %d\n", inet_ntoa(in_addr.sin_addr),
                      ntohs(in_addr.sin_port), req->path, status);
             }
+            reset_http_request(req);
           }
         }
         if ((events[i].events & EPOLLRDHUP) == EPOLLRDHUP) {
+          struct HttpRequest *req = (struct HttpRequest *)events[i].data.ptr;
+          int cd = req->cd;
           http_free_request(req);
           free(req);
           if (close(cd) < 0) {
@@ -133,6 +173,7 @@ int main(void) {
             printf("Connection close successfully to: %s:%d\n",
                    inet_ntoa(in_addr.sin_addr), ntohs(in_addr.sin_port));
           }
+          epoll_ctl(epoll, EPOLL_CTL_DEL, cd, NULL);
         }
       }
     }
