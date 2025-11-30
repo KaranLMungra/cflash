@@ -5,10 +5,10 @@ set xev
 clang \
   -O3 -march=native -flto=thin \
   -fomit-frame-pointer \
-  -fdata-sections -ffunction-sections \
+  -fno-stack-protector \
+  -fno-asynchronous-unwind-tables -fno-unwind-tables \
   -DNDEBUG \
   main.c http.c \
-  -Wl,-O2 -Wl,--gc-sections -s \
   -o echo
 
 if [ $? = 0 ]; then
