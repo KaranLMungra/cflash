@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -15,6 +16,7 @@
 #define SERVER_HOST "127.0.0.1"
 #define MAX_BUFFER_SIZE 4096
 #define NUM_EPOLL_EVENTS 10
+#define NUM_IOVEC 2
 static char buffer[MAX_BUFFER_SIZE];
 static struct epoll_event events[NUM_EPOLL_EVENTS] = {0};
 
@@ -51,6 +53,7 @@ int main(void) {
   struct sigaction act = {0};
   act.sa_flags = SA_SIGINFO;
   act.sa_sigaction = &signal_handler;
+  struct iovec vec[NUM_IOVEC];
 
   if (epoll < 0) {
     fprintf(stderr, "Unable to create epoll, due to error %s\n",
@@ -148,15 +151,17 @@ int main(void) {
           } else {
             enum HttpStatus status =
                 make_http_request(buffer, read_bytes + 1, req);
-            memset(buffer, 0, MAX_BUFFER_SIZE);
             if (status == HTTP_OK) {
-              sprintf(buffer,
+              int n = snprintf(buffer, MAX_BUFFER_SIZE - 1,
                       "HTTP/1.1 200 0K\r\nContent-Length: "
-                      "%ld\r\nContent-Type: text/plain\r\n\r\n%s",
-                      req->body_length, req->body);
-              write(cd, buffer, strlen(buffer));
-              printf("%s:%d%s %d\n", inet_ntoa(in_addr.sin_addr),
-                     ntohs(in_addr.sin_port), req->path, status);
+                      "%ld\r\nContent-Type: text/plain\r\n\r\n",
+                      req->body_length);
+              vec[0].iov_base = buffer;
+              vec[0].iov_len = n;
+              vec[1].iov_base = req->body;
+              vec[1].iov_len = req->body_length;
+
+              writev(cd, vec, NUM_IOVEC);
             }
             reset_http_request(req);
           }
@@ -170,8 +175,6 @@ int main(void) {
             fprintf(stderr, "Failed to close accept socket, due to error %s\n",
                     strerror(errno));
           } else {
-            // printf("Connection close successfully to: %s:%d\n",
-            // inet_ntoa(in_addr.sin_addr), ntohs(in_addr.sin_port));
           }
           epoll_ctl(epoll, EPOLL_CTL_DEL, cd, NULL);
         }

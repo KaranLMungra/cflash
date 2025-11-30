@@ -75,7 +75,7 @@ int _extract_path(const char *buffer, int until, struct HttpRequest *req) {
     // TODO: Might need allocations
     return HTTP_INVALID;
   }
-  strncpy(req->path, buffer, until);
+  memset(req->path, 0, HTTP_MAX_BUFFER_SIZE);
   return 0;
 }
 
@@ -87,8 +87,6 @@ int _extract_http_header(const char *buffer, int until,
     return HTTP_INVALID;
   }
   int curr_header = req->num_headers++;
-  memset(req->headers[curr_header].name, 0, key_end + 1);
-  memset(req->headers[curr_header].value, 0, until - key_end - 1);
   strncpy(req->headers[curr_header].name, buffer, key_end);
   strncpy(req->headers[curr_header].value, buffer + key_end + 2,
           until - key_end - 2);
@@ -103,9 +101,9 @@ void init_http_request(struct HttpRequest *req, int cd) {
 }
 
 void reset_http_request(struct HttpRequest *req) {
-  // memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
-  // memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
-  // memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
+  memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
   req->body_length = 0;
   req->num_headers = 0;
   req->method = 0;
