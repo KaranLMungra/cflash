@@ -1,26 +1,23 @@
 #include <arpa/inet.h>
+#include <bits/pthreadtypes.h>
 #include <errno.h>
 #include <netinet/in.h>
-#include <pthread.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define TCP_PROTOCOL 0x06
 #define TCP_ADDR 0x0
 #define TCP_PORT 8000
 #define TCP_BACKLOG 1024
 #define BUFF_SIZE 512
-#define STACK_SIZE 8192
-#define NUM_THREADS 100
-#define WORKER_THREADS 100
-
-struct thread_info {   /* Used as argument to thread_start() */
-  pthread_t thread_id; /* ID returned by pthread_create() */
-  int sd;              /* Socket descriptor */
-};
+#define EVENT_SIZE 1024
+#define WORKERS 4
 
 const char *CONTENT_200 =
     "HTTP/1.1 200 OK\r\nServer: Server/1.0\r\nContent-Language: "
@@ -50,7 +47,11 @@ enum ECHO_SERVER_ERRORS {
   FAILED_SOCKET_CREATE,
   UNKNOWN
 };
-static struct thread_info tinfo[NUM_THREADS];
+
+struct thread_info {
+  pthread_t thread_id;
+  int sd;
+};
 
 int handle_http(char *buffer, int read_bytes) {
   char *r = buffer;
@@ -176,7 +177,7 @@ void handle_response(int sd, int ret, enum ECHO_SERVER_ERRORS server_errno) {
 int handle_http_status(int sd, int status) {
   switch (status) {
   case 200:
-    return write(sd, CONTENT_200, strlen(CONTENT_200));
+    return send(sd, CONTENT_200, strlen(CONTENT_200), MSG_DONTWAIT);
   case 400:
     return write(sd, CONTENT_400, strlen(CONTENT_400));
   case 404:
@@ -193,60 +194,102 @@ int handle_http_status(int sd, int status) {
   }
 }
 
-void *handle_conn(void *arg) {
-
-  char buffer[BUFF_SIZE];
-  struct thread_info *info = (struct thread_info *)arg;
+int accept_request(int sd) {
   socklen_t addrlen = sizeof(struct sockaddr_in);
+  struct sockaddr_in client_addr = {0};
+  int cd = accept(sd, (struct sockaddr *)&client_addr, &addrlen);
+  if (cd < 0) {
+    fprintf(stderr, "Failed to accept tcp connection, due to error %s",
+            strerror(errno));
+  }
+  printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
+         ntohs(client_addr.sin_port));
+  return cd;
+}
 
-  for (;;) {
-    struct sockaddr_in client_addr = {0};
-    int cd = accept(info->sd, (struct sockaddr *)&client_addr, &addrlen);
-    if (cd < 0) {
-      fprintf(stderr, "Failed to accept tcp connection, due to error %s",
-              strerror(errno));
+int handle_read(int cd) {
+  char buffer[BUFF_SIZE];
+  // TODO: This must be a loop, until we get EOF
+  memset(buffer, 0, BUFF_SIZE);
+  int read_bytes = read(cd, buffer, BUFF_SIZE - 1);
+  // printf("Number of bytes read %d\n", read_bytes);
+  if (read_bytes == 0) {
+      return 400;
+  } else if (read_bytes == -1) {
+    fprintf(stderr, "Failed to read from tcp socket, due to error %s\n",
+            strerror(errno));
+  } else {
+    buffer[read_bytes] = 0;
+    int status = handle_http(buffer, read_bytes);
+    printf("Status code = %d\n", status);
+    return status;
+  }
+  return 400;
+}
+
+void handle_write(int cd, int status) {
+  if (handle_http_status(cd, status) == -1) {
+    fprintf(stderr, "Failed to write to tcp socket, due to error %s\n",
+            strerror(errno));
+  }
+}
+
+void* handle_conn(void* arg) {
+  int sd = ((struct thread_info*) arg)->sd;
+  struct pollfd pfds[EVENT_SIZE];
+  int status[EVENT_SIZE];
+  memset(pfds, 0, sizeof(pfds));
+  memset(status, 0, sizeof(status));
+  pfds[0].fd = sd;
+  pfds[0].events = POLLIN;
+  int current_length = 1;
+
+  while (1) {
+    int ret = poll(pfds, current_length, 100);
+    if (ret == 0) {
+      continue;
     }
-    printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
-           ntohs(client_addr.sin_port));
-
-    // TODO: This must be a loop, until we get EOF
-    memset(buffer, 0, BUFF_SIZE);
-    int read_bytes = read(cd, buffer, BUFF_SIZE - 1);
-    if (read_bytes == 0) {
-    } else if (read_bytes == -1) {
-      fprintf(stderr, "Failed to read from tcp socket, due to error %s\n",
-              strerror(errno));
-    } else {
-      buffer[read_bytes] = 0;
-      int status = handle_http(buffer, read_bytes);
-      printf("Status code = %d\n", status);
-      if (handle_http_status(cd, status) == -1) {
-        fprintf(stderr, "Failed to write to tcp socket, due to error %s\n",
-                strerror(errno));
+    for (int i = 0; i < current_length; ++i) {
+      if ((pfds[i].revents & POLLIN) == POLLIN) {
+        if (i == 0) {
+          int cd = accept_request(sd);
+          pfds[current_length].fd = cd;
+          pfds[current_length].events = POLLIN | POLLOUT;
+          current_length++;
+        } else {
+          status[i] = handle_read(pfds[i].fd);
+        }
       }
-    }
-    if (close(cd) == -1) {
-      fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
-              strerror(errno));
+      if ((pfds[i].revents & POLLOUT) == POLLOUT && status[i]) {
+        handle_write(pfds[i].fd, status[i]);
+        if (close(pfds[i].fd) == -1) {
+          fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
+                  strerror(errno));
+        }
+        memcpy(&pfds[i], &pfds[current_length - 1], sizeof(struct pollfd));
+        memcpy(&status[i], &status[current_length - 1], sizeof(int));
+        current_length--;
+      }
     }
   }
   return NULL;
 }
 
 int main(void) {
-  pthread_attr_t attr = {0};
   void *res;
   int optval = 1;
+  struct thread_info tinfo[WORKERS];
+  pthread_attr_t attr = {0};
+  pthread_attr_init(&attr);
+  memset(tinfo, 0, sizeof(tinfo));
   printf("Trying to create TCP socket...\n");
-  int sd = socket(AF_INET, SOCK_STREAM, TCP_PROTOCOL);
+
+  int sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, TCP_PROTOCOL);
   handle_response(sd, sd, FAILED_SOCKET_CREATE);
   handle_response(
       sd, setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (int *)&optval, sizeof(int)),
       FAILED_SOCKET_SET_OPTION);
   printf("Socket option SO_REUSEADDR = %d\n", optval);
-
-  handle_response(sd, pthread_attr_init(&attr), UNKNOWN);
-  handle_response(sd, pthread_attr_setstacksize(&attr, STACK_SIZE), UNKNOWN);
 
   struct sockaddr_in addr = {
       .sin_family = AF_INET,
@@ -261,19 +304,15 @@ int main(void) {
          inet_ntoa((struct in_addr){.s_addr = TCP_ADDR}), TCP_PORT);
   handle_response(sd, listen(sd, TCP_BACKLOG), FAILED_SOCKET_LISTEN);
   printf("Listening for incoming connections...\n");
-  for (size_t i = 0; i < NUM_THREADS; ++i) {
-    tinfo[i].sd = sd;
-    handle_response(sd,
-                    pthread_create(&tinfo[i].thread_id, &attr, &handle_conn,
-                                   (void *)&tinfo[i]),
-                    UNKNOWN);
+  for(int i = 0; i < WORKERS; ++i) {
+      tinfo[i].sd = sd;
+      handle_response(sd, pthread_create(&tinfo[i].thread_id, &attr, &handle_conn, &tinfo[i]), UNKNOWN);
   }
-
+  for(int i = 0; i < WORKERS; ++i) {
+      handle_response(sd, pthread_join(tinfo->thread_id, &res), UNKNOWN);
+  }
   // TODO: Add signal handler Ctrl+C
-  handle_response(sd, pthread_attr_destroy(&attr), UNKNOWN);
-  for (size_t i = 0; i < NUM_THREADS; ++i) {
-    handle_response(sd, pthread_join(tinfo[i].thread_id, &res), UNKNOWN);
-  }
+  pthread_attr_destroy(&attr);
   handle_response(sd, close(sd), FAILED_SOCKET_CLOSE);
   printf("TCP socket closed successfully, socket = %d\n", sd);
   return 0;
