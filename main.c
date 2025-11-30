@@ -1,319 +1,155 @@
+#include "http.h"
 #include <arpa/inet.h>
-#include <bits/pthreadtypes.h>
 #include <errno.h>
 #include <netinet/in.h>
-#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
-#include <pthread.h>
 
-#define TCP_PROTOCOL 0x06
-#define TCP_ADDR 0x0
-#define TCP_PORT 8000
-#define TCP_BACKLOG 1024
-#define BUFF_SIZE 512
-#define EVENT_SIZE 1024
-#define WORKERS 4
-
-const char *CONTENT_200 =
-    "HTTP/1.1 200 OK\r\nServer: Server/1.0\r\nContent-Language: "
-    "en\r\nContent-Length: 13\r\nConnection: close\r\nContent-Type: "
-    "text/plain\r\n\r\nHello, World!";
-const char *CONTENT_400 = "HTTP/1.1 400 Bad Request\r\nServer: "
-                          "Server/1.0\r\nConnection: close\r\n\r\n";
-const char *CONTENT_404 =
-    "HTTP/1.1 404 Not Found\r\nServer: Server/1.0\r\nConnection: close\r\n\r\n";
-const char *CONTENT_405 = "HTTP/1.1 405 Method Not Allowed\r\nServer: "
-                          "Server/1.0\r\nConnection: close\r\n\r\n";
-const char *CONTENT_500 = "HTTP/1.1 500 Internal Server Error\r\nServer: "
-                          "Server/1.0\r\nConnection: close\r\n\r\n";
-const char *CONTENT_503 = "HTTP/1.1 503 Service Unavailable\r\nServer: "
-                          "Server/1.0\r\nConnection: close\r\n\r\n";
-const char *CONTENT_505 = "HTTP/1.1 505 HTTP Version not supported\r\nServer: "
-                          "Server/1.0\r\nConnection: close\r\n\r\n";
-
-enum ECHO_SERVER_ERRORS {
-  FAILED_SOCKET_CLOSE = -8,
-  FAILED_SOCKET_WRITE,
-  FAILED_SOCKET_READ,
-  FAILED_SOCKET_ACCEPT,
-  FAILED_SOCKET_LISTEN,
-  FAILED_SOCKET_BIND,
-  FAILED_SOCKET_SET_OPTION,
-  FAILED_SOCKET_CREATE,
-  UNKNOWN
-};
-
-struct thread_info {
-  pthread_t thread_id;
-  int sd;
-};
-
-int handle_http(char *buffer, int read_bytes) {
-  char *r = buffer;
-  int i = 0;
-  // Handling: Method
-  while (i <= read_bytes && buffer[i] != ' ') {
-    i++;
-  }
-  if (i == read_bytes) {
-    fprintf(stderr, "Failed to parse http request");
-    return 400;
-  }
-  buffer[i] = 0;
-  // printf("Method: %s\n", r);
-  if (strcmp("GET", r) != 0) {
-    return 405;
-  }
-  buffer[i] = ' ';
-  r = &buffer[++i];
-  // Handling: Path
-  while (i <= read_bytes && buffer[i] != ' ') {
-    i++;
-  }
-  if (i == read_bytes) {
-    // fprintf(stderr, "Failed to parse http request");
-    return 400;
-  }
-  buffer[i] = 0;
-  // printf("Path: %s\n", r);
-  if (strcmp("/", r) != 0) {
-    return 404;
-  }
-  buffer[i] = ' ';
-  r = &buffer[++i];
-  // Handling: Version
-  while (i <= read_bytes && buffer[i] != '\r') {
-    i++;
-  }
-  if (i == read_bytes) {
-    fprintf(stderr, "Failed to parse http request");
-    return 400;
-  }
-  buffer[i] = 0;
-  // printf("Version: %s\n", r);
-  if (strcmp("HTTP/1.1", r) != 0) {
-    return 505;
-  }
-  buffer[i] = '\r';
-  i += 2;
-  r = &buffer[i];
-  // Handling headers
-  // printf("Headers:\n");
-  while (i <= read_bytes && buffer[i] != '\r') {
-    while (i <= read_bytes && buffer[i] != '\r') {
-      i++;
-    }
-    buffer[i] = 0;
-    // printf("%s\n", r);
-    buffer[i] = '\r';
-    i += 2;
-    r = &buffer[i];
-  }
-  i += 2;
-  r = &buffer[i];
-  // printf("Content:\n");
-  // printf("%s", r);
-  return 200;
-}
-
-void handle_response(int sd, int ret, enum ECHO_SERVER_ERRORS server_errno) {
-  if (ret >= 0) {
-    return;
-  }
-  fprintf(stderr, "Server errno: %d", server_errno);
-  switch (server_errno) {
-  case FAILED_SOCKET_CREATE:
-    fprintf(stderr, "Failed to create tcp socket, due to error %s\n",
-            strerror(errno));
-    exit(server_errno);
-
-  case FAILED_SOCKET_SET_OPTION:
-    fprintf(stderr, "Failed to set option for tcp socket, due to error %s\n",
-            strerror(errno));
-    break;
-  case FAILED_SOCKET_BIND:
-    fprintf(stderr, "Failed to bind tcp socket, due to error %s\n",
-            strerror(errno));
-    break;
-  case FAILED_SOCKET_LISTEN:
-    fprintf(stderr, "Failed to listen on tcp socket, due to error %s\n",
-            strerror(errno));
-    break;
-  case FAILED_SOCKET_ACCEPT:
-    fprintf(stderr, "Failed to accept on tcp socket, due to error %s\n",
-            strerror(errno));
-    exit(errno);
-  case FAILED_SOCKET_READ:
-    fprintf(stderr,
-            "Failed to read on tcp socket, due to error %s and errcode %d\n",
-            strerror(errno), errno);
-    break;
-
-  case FAILED_SOCKET_WRITE:
-    fprintf(stderr,
-            "Failed to write on tcp socket, due to error %s and errcode %d\n",
-            strerror(errno), errno);
-    break;
-  case FAILED_SOCKET_CLOSE:
-    fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
-            strerror(errno));
-    exit(server_errno);
-  case UNKNOWN:
-    fprintf(stderr, "Error Happened at unknown place %s\n", strerror(errno));
-    break;
-  }
-  if (close(sd) == -1) {
-    fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
-            strerror(errno));
-    exit(server_errno);
-  }
-}
-
-int handle_http_status(int sd, int status) {
-  switch (status) {
-  case 200:
-    return send(sd, CONTENT_200, strlen(CONTENT_200), MSG_DONTWAIT);
-  case 400:
-    return write(sd, CONTENT_400, strlen(CONTENT_400));
-  case 404:
-    return write(sd, CONTENT_404, strlen(CONTENT_404));
-  case 405:
-    return write(sd, CONTENT_405, strlen(CONTENT_405));
-  case 503:
-    return write(sd, CONTENT_503, strlen(CONTENT_503));
-  case 505:
-    return write(sd, CONTENT_505, strlen(CONTENT_505));
-  default:
-    fprintf(stderr, "Status code = %d, not supported yet.", status);
-    return write(sd, CONTENT_500, strlen(CONTENT_500));
-  }
-}
-
-int accept_request(int sd) {
-  socklen_t addrlen = sizeof(struct sockaddr_in);
-  struct sockaddr_in client_addr = {0};
-  int cd = accept(sd, (struct sockaddr *)&client_addr, &addrlen);
-  if (cd < 0) {
-    fprintf(stderr, "Failed to accept tcp connection, due to error %s",
-            strerror(errno));
-  }
-  printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
-         ntohs(client_addr.sin_port));
-  return cd;
-}
-
-int handle_read(int cd) {
-  char buffer[BUFF_SIZE];
-  // TODO: This must be a loop, until we get EOF
-  memset(buffer, 0, BUFF_SIZE);
-  int read_bytes = read(cd, buffer, BUFF_SIZE - 1);
-  // printf("Number of bytes read %d\n", read_bytes);
-  if (read_bytes == 0) {
-      return 400;
-  } else if (read_bytes == -1) {
-    fprintf(stderr, "Failed to read from tcp socket, due to error %s\n",
-            strerror(errno));
-  } else {
-    buffer[read_bytes] = 0;
-    int status = handle_http(buffer, read_bytes);
-    printf("Status code = %d\n", status);
-    return status;
-  }
-  return 400;
-}
-
-void handle_write(int cd, int status) {
-  if (handle_http_status(cd, status) == -1) {
-    fprintf(stderr, "Failed to write to tcp socket, due to error %s\n",
-            strerror(errno));
-  }
-}
-
-void* handle_conn(void* arg) {
-  int sd = ((struct thread_info*) arg)->sd;
-  struct pollfd pfds[EVENT_SIZE];
-  int status[EVENT_SIZE];
-  memset(pfds, 0, sizeof(pfds));
-  memset(status, 0, sizeof(status));
-  pfds[0].fd = sd;
-  pfds[0].events = POLLIN;
-  int current_length = 1;
-
-  while (1) {
-    int ret = poll(pfds, current_length, 100);
-    if (ret == 0) {
-      continue;
-    }
-    for (int i = 0; i < current_length; ++i) {
-      if ((pfds[i].revents & POLLIN) == POLLIN) {
-        if (i == 0) {
-          int cd = accept_request(sd);
-          pfds[current_length].fd = cd;
-          pfds[current_length].events = POLLIN | POLLOUT;
-          current_length++;
-        } else {
-          status[i] = handle_read(pfds[i].fd);
-        }
-      }
-      if ((pfds[i].revents & POLLOUT) == POLLOUT && status[i]) {
-        handle_write(pfds[i].fd, status[i]);
-        if (close(pfds[i].fd) == -1) {
-          fprintf(stderr, "Failed to close tcp socket, due to error %s\n",
-                  strerror(errno));
-        }
-        memcpy(&pfds[i], &pfds[current_length - 1], sizeof(struct pollfd));
-        memcpy(&status[i], &status[current_length - 1], sizeof(int));
-        current_length--;
-      }
-    }
-  }
-  return NULL;
-}
+#define SERVER_PORT 8080
+#define SERVER_HOST "127.0.0.1"
+#define MAX_BUFFER_SIZE 4096
+#define NUM_EPOLL_EVENTS 10
 
 int main(void) {
-  void *res;
+  int sd;
+  int err;
   int optval = 1;
-  struct thread_info tinfo[WORKERS];
-  pthread_attr_t attr = {0};
-  pthread_attr_init(&attr);
-  memset(tinfo, 0, sizeof(tinfo));
-  printf("Trying to create TCP socket...\n");
+  int epoll = epoll_create1(0);
+  static struct epoll_event events[NUM_EPOLL_EVENTS] = {0};
 
-  int sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, TCP_PROTOCOL);
-  handle_response(sd, sd, FAILED_SOCKET_CREATE);
-  handle_response(
-      sd, setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (int *)&optval, sizeof(int)),
-      FAILED_SOCKET_SET_OPTION);
-  printf("Socket option SO_REUSEADDR = %d\n", optval);
-
+  if (epoll < 0) {
+    fprintf(stderr, "Unable to create epoll, due to error %s\n",
+            strerror(errno));
+    goto exit;
+  }
+  char buffer[MAX_BUFFER_SIZE];
+  sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+  if (sd < 0) {
+    fprintf(stderr, "Unable to create socket, due to error %s\n",
+            strerror(errno));
+    err = sd;
+    goto exit;
+  }
+  printf("Successfully created socket: %d\n", sd);
+  err = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int));
+  if (err < 0) {
+    fprintf(stderr, "Unable to set option socket, due to error %s\n",
+            strerror(errno));
+    goto exit;
+  }
   struct sockaddr_in addr = {
       .sin_family = AF_INET,
-      .sin_addr = {.s_addr = TCP_ADDR},
-      .sin_port = htons(TCP_PORT),
+      .sin_port = htons(SERVER_PORT),
+      .sin_addr = inet_addr(SERVER_HOST),
   };
-  printf("TCP socket created successfully, socket = %d\n", sd);
-  handle_response(
-      sd, bind(sd, (struct sockaddr *)(&addr), sizeof(struct sockaddr_in)),
-      FAILED_SOCKET_BIND);
-  printf("Successfully binded TCP socket to address %s and port %d\n",
-         inet_ntoa((struct in_addr){.s_addr = TCP_ADDR}), TCP_PORT);
-  handle_response(sd, listen(sd, TCP_BACKLOG), FAILED_SOCKET_LISTEN);
-  printf("Listening for incoming connections...\n");
-  for(int i = 0; i < WORKERS; ++i) {
-      tinfo[i].sd = sd;
-      handle_response(sd, pthread_create(&tinfo[i].thread_id, &attr, &handle_conn, &tinfo[i]), UNKNOWN);
+  err = bind(sd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in));
+  if (err < 0) {
+    fprintf(stderr, "Unable to bind socket, due to error %s\n",
+            strerror(errno));
+    goto exit;
   }
-  for(int i = 0; i < WORKERS; ++i) {
-      handle_response(sd, pthread_join(tinfo->thread_id, &res), UNKNOWN);
+  printf("Successfully, bound the socket to %s:%d\n", SERVER_HOST, SERVER_PORT);
+  err = listen(sd, SOMAXCONN);
+  if (err < 0) {
+    fprintf(stderr, "Unable to lisen socket, due to error %s\n",
+            strerror(errno));
+    goto exit;
   }
-  // TODO: Add signal handler Ctrl+C
-  pthread_attr_destroy(&attr);
-  handle_response(sd, close(sd), FAILED_SOCKET_CLOSE);
-  printf("TCP socket closed successfully, socket = %d\n", sd);
-  return 0;
+  printf("Successfully, listening for incoming connections...\n");
+  struct sockaddr_in in_addr;
+  socklen_t in_addr_len = (socklen_t)sizeof(struct sockaddr_in);
+  struct epoll_event ev = {
+      .events = EPOLLIN,
+      .data.fd = sd,
+  };
+  struct timespec timeout = {
+      .tv_sec = 0,
+      .tv_nsec = 100000000,
+  };
+  sigset_t ss = {0};
+  sigemptyset(&ss);
+  sigaddset(&ss, SIGTERM);
+  epoll_ctl(epoll, EPOLL_CTL_ADD, sd, &ev);
+  while (1) {
+    int events_ready =
+        epoll_pwait2(epoll, events, NUM_EPOLL_EVENTS, &timeout, &ss);
+    if (events_ready == 0) {
+      continue;
+    } else if (events_ready < 0) {
+      fprintf(stderr, "Failed to read events, due to error %s\n",
+              strerror(errno));
+      continue;
+    }
+    for (int i = 0; i < events_ready; ++i) {
+      if (events[i].data.fd == sd) {
+        int cd = accept(sd, (struct sockaddr *)&in_addr, &in_addr_len);
+        if (cd < 0) {
+          fprintf(stderr, "Failed to accept connection, due to error %s\n",
+                  strerror(errno));
+          continue;
+        }
+        struct HttpRequest *req = calloc(1, sizeof(struct HttpRequest));
+        init_http_request(req, cd);
+        ev.events = EPOLLIN | EPOLLRDHUP;
+        ev.data.ptr = req;
+        epoll_ctl(epoll, EPOLL_CTL_ADD, cd, &ev);
+      } else {
+        struct HttpRequest *req = (struct HttpRequest *)events[i].data.ptr;
+        int cd = req->cd;
+        if ((events[i].events & EPOLLIN) == EPOLLIN) {
+          memset(buffer, 0, MAX_BUFFER_SIZE);
+          int read_bytes = read(cd, buffer, MAX_BUFFER_SIZE - 1);
+          if (read_bytes < 0) {
+            fprintf(stderr, "Failed to read from socket, due to error %s\n",
+                    strerror(errno));
+          } else {
+            enum HttpStatus status =
+                make_http_request(buffer, read_bytes + 1, req);
+            memset(buffer, 0, MAX_BUFFER_SIZE);
+            if (status == HTTP_OK) {
+              sprintf(buffer,
+                      "HTTP/1.1 200 0K\r\nContent-Length: "
+                      "%ld\r\nContent-Type: text/plain\r\n\r\n%s",
+                      req->body_length, req->body);
+              write(cd, buffer, strlen(buffer));
+              printf("%s:%d%s %d\n", inet_ntoa(in_addr.sin_addr),
+                     ntohs(in_addr.sin_port), req->path, status);
+            }
+          }
+        }
+        if ((events[i].events & EPOLLRDHUP) == EPOLLRDHUP) {
+          http_free_request(req);
+          free(req);
+          if (close(cd) < 0) {
+            fprintf(stderr, "Failed to close accept socket, due to error %s\n",
+                    strerror(errno));
+          } else {
+            printf("Connection close successfully to: %s:%d\n",
+                   inet_ntoa(in_addr.sin_addr), ntohs(in_addr.sin_port));
+          }
+        }
+      }
+    }
+  }
+exit:
+  if (epoll >= 0) {
+    if (close(epoll) < 0) {
+      fprintf(stderr, "Failed to close epoll, due to error %s\n",
+              strerror(errno));
+    }
+  }
+  if (sd >= 0) {
+    if (close(sd) < 0) {
+      fprintf(stderr, "Failed to close socket, due to error %s\n",
+              strerror(errno));
+    }
+  }
+  printf("Successfully closed socket: %d\n", sd);
+  return err;
 }
