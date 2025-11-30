@@ -170,8 +170,8 @@ int main(void) {
             fprintf(stderr, "Failed to close accept socket, due to error %s\n",
                     strerror(errno));
           } else {
-            printf("Connection close successfully to: %s:%d\n",
-                   inet_ntoa(in_addr.sin_addr), ntohs(in_addr.sin_port));
+            // printf("Connection close successfully to: %s:%d\n",
+            // inet_ntoa(in_addr.sin_addr), ntohs(in_addr.sin_port));
           }
           epoll_ctl(epoll, EPOLL_CTL_DEL, cd, NULL);
         }

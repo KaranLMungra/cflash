@@ -21,30 +21,32 @@
   j = i;
 
 int _skip_until_space(int curr_pos, const char *buffer, int buf_len) {
-  while (curr_pos < buf_len) {
-    if (buffer[curr_pos] == ' ') {
-      return curr_pos;
-    }
-    curr_pos++;
+  size_t remaining = (size_t)(buf_len - curr_pos);
+  const char *colon_ptr = memchr(buffer + curr_pos, ' ', remaining);
+  if (colon_ptr != NULL) {
+    return (int)(colon_ptr - buffer);
   }
   return HTTP_INVALID;
 }
 int _skip_until_colon(int curr_pos, const char *buffer, int buf_len) {
-  while (curr_pos < buf_len) {
-    if (buffer[curr_pos] == ':') {
-      return curr_pos;
-    }
-    curr_pos++;
+  size_t remaining = (size_t)(buf_len - curr_pos);
+  const char *colon_ptr = memchr(buffer + curr_pos, ':', remaining);
+  if (colon_ptr != NULL) {
+    return (int)(colon_ptr - buffer);
   }
   return HTTP_INVALID;
 }
 
 int _skip_until_eol(int curr_pos, const char *buffer, int buf_len) {
-  while (curr_pos + 1 < buf_len) {
-    if (buffer[curr_pos] == '\r' && buffer[curr_pos + 1] == '\n') {
-      return curr_pos;
-    }
-    curr_pos++;
+  size_t remaining = (size_t)(buf_len - curr_pos - 1);
+  const char *r_pos = memchr(buffer + curr_pos, '\r', remaining);
+  if (r_pos == NULL) {
+    return HTTP_INVALID;
+  }
+
+  int pos = r_pos - buffer;
+  if (buffer[pos + 1] == '\n') {
+    return pos;
   }
   return HTTP_INVALID;
 }
@@ -101,9 +103,9 @@ void init_http_request(struct HttpRequest *req, int cd) {
 }
 
 void reset_http_request(struct HttpRequest *req) {
-  memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
-  memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
-  memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  // memset(req->headers, MAX_HEADERS, sizeof(req->num_headers));
+  // memset(req->body, HTTP_MAX_BUFFER_SIZE, sizeof(char));
+  // memset(req->path, HTTP_MAX_BUFFER_SIZE, sizeof(char));
   req->body_length = 0;
   req->num_headers = 0;
   req->method = 0;
