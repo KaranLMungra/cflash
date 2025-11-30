@@ -1,20 +1,26 @@
-#include <stdlib.h>
-
 #ifndef HTTP_INCLUDE
 #define HTTP_INCLUDE
+
+#include <stddef.h>
+#include <stdlib.h>
+
 #define HTTP_MAX_BUFFER_SIZE 4096
 #define HTTP_SUPPORTED_VERSION "HTTP/1.1"
 #define HTTP_INVALID -1
 #define MAX_HEADERS 32
+
+#define HTTP_HEADER_NAME_MAX 64
+#define HTTP_HEADER_VALUE_MAX 512
+#define HTTP_MAX_PATH_LENGTH 1024
 
 enum HttpMethod { HTTP_GET = 0, HTTP_POST, HTTP_METHOD_NUM };
 
 static const char *HTTP_METHODS_STR[HTTP_METHOD_NUM] = {"GET", "POST"};
 
 struct HttpHeader {
-  char name[HTTP_MAX_BUFFER_SIZE];
-  char value[HTTP_MAX_BUFFER_SIZE];
+  const char *name;
   size_t name_length;
+  const char *value;
   size_t value_length;
 };
 
@@ -28,12 +34,18 @@ enum HttpStatus {
 struct HttpRequest {
   int cd;
   enum HttpMethod method;
-  char path[HTTP_MAX_BUFFER_SIZE];
+
+  const char *path;
+  size_t path_length;
+
   struct HttpHeader *headers;
   size_t num_headers;
-  char body[HTTP_MAX_BUFFER_SIZE];
+
+  const char *body;
   size_t body_length;
-  size_t path_length;
+
+  char buffer[HTTP_MAX_BUFFER_SIZE];
+  size_t buffer_length;
 };
 
 void init_http_request(struct HttpRequest *req);
@@ -42,4 +54,5 @@ enum HttpStatus make_http_request(const char *buffer, int buf_len,
 
 void print_http_request(const struct HttpRequest *req);
 void http_free_request(struct HttpRequest *req);
+
 #endif
