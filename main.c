@@ -42,9 +42,7 @@ static inline char *u64_to_str(char *end, size_t v) {
 }
 
 int main(void) {
-  int sd = -1;
   int err;
-  int optval = 1;
   int epoll_fd = epoll_create1(0);
   struct sigaction act = {0};
   act.sa_flags = SA_SIGINFO;
@@ -55,6 +53,10 @@ int main(void) {
   for (int i = 0; i < MAX_CONCURRENT_HTTP_REQUESTS; ++i) {
     init_http_request(&requests[i]);
   }
+  struct HttpServer server = {0};
+  if(begin_http_server(&server, SERVER_HOST, SERVER_PORT) < 0) {
+      return -1;
+  }
 
   if (epoll_fd < 0) {
     fprintf(stderr, "unable to create epoll, due to error %s\n",
@@ -62,33 +64,14 @@ int main(void) {
     goto exit;
   }
 
-  sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
-  if (sd < 0) {
-    fprintf(stderr, "unable to create socket, due to error %s\n",
-            strerror(errno));
-    err = sd;
-    goto exit;
-  }
-  err = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int));
-  if (err < 0) {
-    fprintf(stderr, "unable to set option socket, due to error %s\n",
-            strerror(errno));
-    goto exit;
-  }
 
   struct sockaddr_in addr = {
       .sin_family = AF_INET,
       .sin_port = htons(SERVER_PORT),
       .sin_addr = {inet_addr(SERVER_HOST)},
   };
-  err = bind(sd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in));
-  if (err < 0) {
-    fprintf(stderr, "unable to bind socket, due to error %s\n",
-            strerror(errno));
-    goto exit;
-  }
-  printf("starting server at %s:%d\n", SERVER_HOST, SERVER_PORT);
-  err = listen(sd, SOMAXCONN);
+
+  err = listen(server.sd, SOMAXCONN);
   if (err < 0) {
     fprintf(stderr, "unable to lisen socket, due to error %s\n",
             strerror(errno));
@@ -105,7 +88,7 @@ int main(void) {
   socklen_t in_addr_len = (socklen_t)sizeof(struct sockaddr_in);
   struct epoll_event ev = {
       .events = EPOLLIN,
-      .data.fd = sd,
+      .data.fd = server.sd,
   };
   struct timespec timeout = {
       .tv_sec = 0,
@@ -116,7 +99,7 @@ int main(void) {
   sigemptyset(&ss);
   sigaddset(&ss, SIGINT);
 
-  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sd, &ev);
+  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server.sd, &ev);
 
   while (1) {
     if (g_stop == 1) {
@@ -137,9 +120,9 @@ int main(void) {
     }
 
     for (int i = 0; i < events_ready; ++i) {
-      if (events[i].data.fd == sd) {
+      if (events[i].data.fd == server.sd) {
         for (;;) {
-          int cd = accept(sd, (struct sockaddr *)&in_addr, &in_addr_len);
+          int cd = accept(server.sd, (struct sockaddr *)&in_addr, &in_addr_len);
           if (cd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
               break;
@@ -245,12 +228,7 @@ exit:
               strerror(errno));
     }
   }
-  if (sd >= 0) {
-    if (close(sd) < 0) {
-      fprintf(stderr, "failed to close socket, due to error %s\n",
-              strerror(errno));
-    }
-  }
+  end_http_server(&server);
   for (int i = 0; i < MAX_CONCURRENT_HTTP_REQUESTS; ++i) {
     http_free_request(&requests[i]);
   }
