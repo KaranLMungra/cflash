@@ -10,9 +10,14 @@
  */
 
 #include "http.h"
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #define _HTTP_PARSE_INC(i, j)                                                  \
   i++;                                                                         \
@@ -211,4 +216,53 @@ void print_http_request(const struct HttpRequest *req) {
 void http_free_request(struct HttpRequest *req) {
   free(req->headers);
   req->headers = NULL;
+}
+
+int begin_http_server(struct HttpServer *server, const char* server_host, int server_port) {
+  if (server == NULL) {
+    return -1;
+  }
+
+  int err = 0;
+  int sd = -1;
+  int optval = 1;
+  struct sockaddr_in addr = {
+      .sin_family = AF_INET,
+      .sin_addr = {
+          .s_addr = inet_addr(server_host)
+      },
+      .sin_port = htons(server_port)
+  };
+
+  sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+  if (sd < 0) {
+    fprintf(stderr, "ERROR: unable to create socket, due to error %s\n",
+            strerror(errno));
+    return -1;
+  }
+
+  err = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int));
+  if (err < 0) {
+    fprintf(stderr, "ERROR: unable to set option SO_REUSERADDR on socket, due to error %s\n",
+            strerror(errno));
+    return -1;
+  }
+
+  err = bind(sd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in));
+  if (err < 0) {
+    fprintf(stderr, "ERROR: unable to bind %s:%d to socket, due to error %s\n", server_host, server_port, strerror(errno));
+    return -1;
+  }
+  printf("INFO: starting server at %s:%d\n", server_host, server_port);
+  server->sd = sd;
+  memcpy(&server->addr, &addr, sizeof(struct sockaddr_in));
+  return 0;
+}
+
+void end_http_server(struct HttpServer *server) {
+  if (close(server->sd) < 0) {
+    fprintf(stderr, "ERROR: unable to close socket, due to error %s\n",
+            strerror(errno));
+    return;
+  }
 }

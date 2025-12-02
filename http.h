@@ -1,6 +1,7 @@
 #ifndef HTTP_INCLUDE
 #define HTTP_INCLUDE
 
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -47,6 +48,14 @@ struct HttpRequest {
   char buffer[HTTP_MAX_BUFFER_SIZE];
   size_t buffer_length;
 };
+
+struct HttpServer {
+    int sd;
+    struct sockaddr_in addr;
+};
+
+int begin_http_server(struct HttpServer *server, const char* server_host, int server_port);
+void end_http_server(struct HttpServer *server);
 
 void init_http_request(struct HttpRequest *req);
 enum HttpStatus make_http_request(const char *buffer, int buf_len,
