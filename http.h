@@ -50,11 +50,14 @@ struct HttpRequest {
 };
 
 struct HttpServer {
-    int sd;
-    struct sockaddr_in addr;
+  int sd;
+  size_t max_concurrent_http_requests;
+  struct sockaddr_in addr;
+  struct HttpRequest *requests;
 };
 
-int begin_http_server(struct HttpServer *server, const char* server_host, int server_port);
+int begin_http_server(struct HttpServer *server, const char *server_host,
+                      int server_port, size_t max_concurrent_http_requests);
 void end_http_server(struct HttpServer *server);
 
 void init_http_request(struct HttpRequest *req);

@@ -218,7 +218,8 @@ void http_free_request(struct HttpRequest *req) {
   req->headers = NULL;
 }
 
-int begin_http_server(struct HttpServer *server, const char* server_host, int server_port) {
+int begin_http_server(struct HttpServer *server, const char *server_host,
+                      int server_port, size_t max_concurrent_http_requests) {
   if (server == NULL) {
     return -1;
   }
@@ -226,13 +227,14 @@ int begin_http_server(struct HttpServer *server, const char* server_host, int se
   int err = 0;
   int sd = -1;
   int optval = 1;
-  struct sockaddr_in addr = {
-      .sin_family = AF_INET,
-      .sin_addr = {
-          .s_addr = inet_addr(server_host)
-      },
-      .sin_port = htons(server_port)
-  };
+  struct sockaddr_in addr = {.sin_family = AF_INET,
+                             .sin_addr = {.s_addr = inet_addr(server_host)},
+                             .sin_port = htons(server_port)};
+  struct HttpRequest *requests =
+      calloc(max_concurrent_http_requests, sizeof(struct HttpRequest));
+  for (int i = 0; i < max_concurrent_http_requests; ++i) {
+    init_http_request(&requests[i]);
+  }
 
   sd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
   if (sd < 0) {
@@ -243,19 +245,25 @@ int begin_http_server(struct HttpServer *server, const char* server_host, int se
 
   err = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int));
   if (err < 0) {
-    fprintf(stderr, "ERROR: unable to set option SO_REUSERADDR on socket, due to error %s\n",
+    fprintf(stderr,
+            "ERROR: unable to set option SO_REUSERADDR on socket, due to error "
+            "%s\n",
             strerror(errno));
     return -1;
   }
 
   err = bind(sd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in));
   if (err < 0) {
-    fprintf(stderr, "ERROR: unable to bind %s:%d to socket, due to error %s\n", server_host, server_port, strerror(errno));
+    fprintf(stderr, "ERROR: unable to bind %s:%d to socket, due to error %s\n",
+            server_host, server_port, strerror(errno));
     return -1;
   }
+
   printf("INFO: starting server at %s:%d\n", server_host, server_port);
   server->sd = sd;
   memcpy(&server->addr, &addr, sizeof(struct sockaddr_in));
+  server->requests = requests;
+  server->max_concurrent_http_requests = max_concurrent_http_requests;
   return 0;
 }
 
@@ -263,6 +271,10 @@ void end_http_server(struct HttpServer *server) {
   if (close(server->sd) < 0) {
     fprintf(stderr, "ERROR: unable to close socket, due to error %s\n",
             strerror(errno));
-    return;
   }
+  for (int i = 0; i < server->max_concurrent_http_requests; ++i) {
+    http_free_request(&server->requests[i]);
+  }
+  free(server->requests);
+  return;
 }

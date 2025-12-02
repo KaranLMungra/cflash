@@ -48,13 +48,9 @@ int main(void) {
   act.sa_flags = SA_SIGINFO;
   act.sa_sigaction = &signal_handler;
   struct iovec vec[NUM_IOVEC];
-  struct HttpRequest *requests =
-      calloc(MAX_CONCURRENT_HTTP_REQUESTS, sizeof(struct HttpRequest));
-  for (int i = 0; i < MAX_CONCURRENT_HTTP_REQUESTS; ++i) {
-    init_http_request(&requests[i]);
-  }
+
   struct HttpServer server = {0};
-  if(begin_http_server(&server, SERVER_HOST, SERVER_PORT) < 0) {
+  if(begin_http_server(&server, SERVER_HOST, SERVER_PORT, MAX_CONCURRENT_HTTP_REQUESTS) < 0) {
       return -1;
   }
 
@@ -64,12 +60,6 @@ int main(void) {
     goto exit;
   }
 
-
-  struct sockaddr_in addr = {
-      .sin_family = AF_INET,
-      .sin_port = htons(SERVER_PORT),
-      .sin_addr = {inet_addr(SERVER_HOST)},
-  };
 
   err = listen(server.sd, SOMAXCONN);
   if (err < 0) {
@@ -137,7 +127,7 @@ int main(void) {
 
           int n_req = 0;
           while (n_req < MAX_CONCURRENT_HTTP_REQUESTS &&
-                 requests[n_req].cd != 0) {
+                 server.requests[n_req].cd != 0) {
             n_req++;
           }
           if (n_req == MAX_CONCURRENT_HTTP_REQUESTS) {
@@ -146,21 +136,21 @@ int main(void) {
             continue;
           }
 
-          requests[n_req].cd = cd;
-          requests[n_req].buffer_length = 0;
-          requests[n_req].num_headers = 0;
-          requests[n_req].path = NULL;
-          requests[n_req].path_length = 0;
-          requests[n_req].body = NULL;
-          requests[n_req].body_length = 0;
+          server.requests[n_req].cd = cd;
+          server.requests[n_req].buffer_length = 0;
+          server.requests[n_req].num_headers = 0;
+          server.requests[n_req].path = NULL;
+          server.requests[n_req].path_length = 0;
+          server.requests[n_req].body = NULL;
+          server.requests[n_req].body_length = 0;
 
           ev.events = EPOLLIN | EPOLLRDHUP;
-          ev.data.ptr = &requests[n_req];
+          ev.data.ptr = &server.requests[n_req];
           if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, cd, &ev) < 0) {
             fprintf(stderr, "Failed to register event, due to error %s\n",
                     strerror(errno));
             close(cd);
-            requests[n_req].cd = 0;
+            server.requests[n_req].cd = 0;
             continue;
           }
         }
@@ -229,9 +219,6 @@ exit:
     }
   }
   end_http_server(&server);
-  for (int i = 0; i < MAX_CONCURRENT_HTTP_REQUESTS; ++i) {
-    http_free_request(&requests[i]);
-  }
-  free(requests);
+
   return err;
 }
