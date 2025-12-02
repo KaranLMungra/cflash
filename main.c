@@ -136,13 +136,8 @@ int main(void) {
             continue;
           }
 
+          init_http_request(&server.requests[n_req]);
           server.requests[n_req].cd = cd;
-          server.requests[n_req].buffer_length = 0;
-          server.requests[n_req].num_headers = 0;
-          server.requests[n_req].path = NULL;
-          server.requests[n_req].path_length = 0;
-          server.requests[n_req].body = NULL;
-          server.requests[n_req].body_length = 0;
 
           ev.events = EPOLLIN | EPOLLRDHUP;
           ev.data.ptr = &server.requests[n_req];
