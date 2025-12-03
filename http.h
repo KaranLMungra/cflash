@@ -26,6 +26,14 @@ struct HttpHeader {
   size_t value_length;
 };
 
+enum HttpContentType {
+    HTTP_TEXT_PLAIN = 0,
+    HTTP_APPLICATION_JSON,
+    HTTP_CONTENT_TYPE_NUM
+};
+
+static const char*HTTP_CONTENT_TYPE_STR[HTTP_CONTENT_TYPE_NUM] = {"text/plain", "application/json"};
+
 enum HttpStatus {
   HTTP_OK = 200,
   HTTP_BAD_REQUEST = 400,
@@ -61,12 +69,12 @@ struct HttpRequest {
 
 struct HttpResponse {
   enum HttpStatus status;
-  char body[HTTP_MAX_BUFFER_SIZE];
-  size_t body_length;
+  const char *content;
+  size_t content_length;
+  enum HttpContentType content_type;
 };
 
-typedef void (*HttpHandler)(const struct HttpRequest *request,
-                            struct HttpResponse*);
+typedef void (*HttpHandler)(const struct HttpRequest *request);
 struct HttpServer {
   int sd;
   int epoll_fd;
@@ -86,5 +94,7 @@ enum HttpStatus make_http_request(const char *buffer, int buf_len,
                                   struct HttpRequest *req);
 void print_http_request(const struct HttpRequest *req);
 void http_free_request(struct HttpRequest *req);
+
+void write_http_response(const struct HttpRequest *req, const struct HttpResponse* response);
 
 #endif

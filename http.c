@@ -420,51 +420,11 @@ int run_http_server(struct HttpServer *server) {
             enum HttpStatus status =
                 make_http_request(req->buffer, read_bytes, req);
             if (status == HTTP_OK) {
+              server->handler(req);
+            } else {
               struct HttpResponse response = {0};
-              size_t buffer_len = 0;
-              server->handler(req, &response);
-              if (response.status != 0) {
-                char header_buffer[HTTP_MAX_BUFFER_SIZE];
-
-                const char *status_str = "500 Internal Server Error";
-                switch (response.status) {
-                case HTTP_OK:
-                  status_str = "200 OK";
-                  break;
-                case HTTP_BAD_REQUEST:
-                  status_str = "400 Bad Request";
-                  break;
-                case HTTP_NOT_FOUND:
-                  status_str = "404 Not Found";
-                  break;
-                case HTTP_VERSION_NOT_SUPPORTED:
-                  status_str = "505 HTTP Version Not Supported";
-                  break;
-                }
-
-                int header_len = snprintf(header_buffer, HTTP_MAX_BUFFER_SIZE,
-                                          "%s %s\r\n"
-                                          "Content-Length: %zu\r\n"
-                                          "Content-Type: text/plain\r\n"
-                                          "\r\n", // End of headers
-                                          HTTP_SUPPORTED_VERSION, status_str,
-                                          response.body_length);
-
-                if (header_len < 0 || header_len >= HTTP_MAX_BUFFER_SIZE) {
-                  fprintf(stderr, "Error: Header too long!\n");
-                }
-
-                vec[0].iov_base = header_buffer;
-                vec[0].iov_len = (size_t)header_len;
-
-                if (response.body_length > 0) {
-                  vec[1].iov_base = (void *)response.body;
-                  vec[1].iov_len = response.body_length;
-                  writev(cd, vec, 2);
-                } else {
-                  writev(cd, vec, 1);
-                }
-              }
+              response.status = status;
+              write_http_response(req, &response);
             }
           }
         }
@@ -499,4 +459,48 @@ void end_http_server(struct HttpServer *server) {
   }
   free(server->requests);
   return;
+}
+
+inline void write_http_response(const struct HttpRequest *req,
+                                const struct HttpResponse *res) {
+  char header_buffer[HTTP_MAX_BUFFER_SIZE];
+  const char *status_str = "500 Internal Server Error";
+  switch (res->status) {
+  case HTTP_OK:
+    status_str = "200 OK";
+    break;
+  case HTTP_BAD_REQUEST:
+    status_str = "400 Bad Request";
+    break;
+  case HTTP_NOT_FOUND:
+    status_str = "404 Not Found";
+    break;
+  case HTTP_VERSION_NOT_SUPPORTED:
+    status_str = "505 HTTP Version Not Supported";
+    break;
+  }
+
+  int header_len =
+      snprintf(header_buffer, HTTP_MAX_BUFFER_SIZE,
+               "%s %s\r\n"
+               "Content-Length: %zu\r\n"
+               "Content-Type: %s\r\n"
+               "\r\n", // End of headers
+               HTTP_SUPPORTED_VERSION, status_str, res->content_length,
+               HTTP_CONTENT_TYPE_STR[res->content_type]);
+
+  if (header_len < 0 || header_len >= HTTP_MAX_BUFFER_SIZE) {
+    fprintf(stderr, "Error: Header too long!\n");
+  }
+
+  vec[0].iov_base = header_buffer;
+  vec[0].iov_len = (size_t)header_len;
+
+  if (res->content_length > 0) {
+    vec[1].iov_base = (void *)res->content;
+    vec[1].iov_len = res->content_length;
+    writev(req->cd, vec, 2);
+  } else {
+    writev(req->cd, vec, 1);
+  }
 }
