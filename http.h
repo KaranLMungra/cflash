@@ -7,6 +7,7 @@
 
 #define HTTP_MAX_BUFFER_SIZE 4096
 #define HTTP_SUPPORTED_VERSION "HTTP/1.1"
+#define HTTP_SUPPORTED_VERSION_LEN 8
 #define HTTP_INVALID -1
 #define MAX_HEADERS 32
 
@@ -32,6 +33,15 @@ enum HttpStatus {
   HTTP_VERSION_NOT_SUPPORTED = 505,
 };
 
+static const char *HTTP_REASON_OK = "OK";
+static const int HTTP_REASON_OK_LEN = 2;
+static const char *HTTP_REASON_BAD_REQUEST = "BAD REQUEST";
+static const int HTTP_REASON_BAD_REQUEST_LEN = 11;
+static const char *HTTP_REASON_NOT_FOUND = "NOT FOUND";
+static const int HTTP_REASON_NOT_FOUND_LEN = 9;
+static const char *HTTP_REASON_VERSION_NOT_SUPPORTED = "VERSION_NOT_SUPPORTED";
+static const int HTTP_REASON_VERSION_NOT_SUPPORTED_LEN = 21;
+
 struct HttpRequest {
   int cd;
   enum HttpMethod method;
@@ -49,21 +59,29 @@ struct HttpRequest {
   size_t buffer_length;
 };
 
+struct HttpResponse {
+  enum HttpStatus status;
+};
+
+typedef void (*HttpHandler)(const struct HttpRequest *request,
+                            struct HttpResponse*);
 struct HttpServer {
   int sd;
+  int epoll_fd;
   size_t max_concurrent_http_requests;
   struct sockaddr_in addr;
   struct HttpRequest *requests;
+  HttpHandler handler;
 };
 
 int begin_http_server(struct HttpServer *server, const char *server_host,
-                      int server_port, size_t max_concurrent_http_requests);
+                      int server_port, size_t max_concurrent_http_requests, HttpHandler handler);
+int run_http_server(struct HttpServer *server);
 void end_http_server(struct HttpServer *server);
 
 void init_http_request(struct HttpRequest *req);
 enum HttpStatus make_http_request(const char *buffer, int buf_len,
                                   struct HttpRequest *req);
-
 void print_http_request(const struct HttpRequest *req);
 void http_free_request(struct HttpRequest *req);
 
