@@ -7,11 +7,14 @@
 
 void http_handler(const struct HttpRequest *request,
                   struct HttpResponse *response) {
-    if(request->method == HTTP_POST && (strncmp(request->path, "/echo", 5) == 0)) {
-        response->status = HTTP_OK;
-    } else {
-        response->status = HTTP_BAD_REQUEST;
-    }
+  if (request->method == HTTP_POST &&
+      (strncmp(request->path, "/echo", 5) == 0)) {
+    memcpy(response->body, request->body, request->body_length);
+    response->body_length = request->body_length;
+    response->status = HTTP_OK;
+  } else {
+    response->status = HTTP_BAD_REQUEST;
+  }
 }
 
 int main(void) {

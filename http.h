@@ -61,6 +61,8 @@ struct HttpRequest {
 
 struct HttpResponse {
   enum HttpStatus status;
+  char body[HTTP_MAX_BUFFER_SIZE];
+  size_t body_length;
 };
 
 typedef void (*HttpHandler)(const struct HttpRequest *request,

@@ -421,46 +421,49 @@ int run_http_server(struct HttpServer *server) {
                 make_http_request(req->buffer, read_bytes, req);
             if (status == HTTP_OK) {
               struct HttpResponse response = {0};
-              char buffer[4096];
+              size_t buffer_len = 0;
               server->handler(req, &response);
-              if (response.status == HTTP_OK || response.status != 0) {
-                vec[0].iov_base = HTTP_SUPPORTED_VERSION;
-                vec[0].iov_len = HTTP_SUPPORTED_VERSION_LEN;
+              if (response.status != 0) {
+                char header_buffer[HTTP_MAX_BUFFER_SIZE];
 
-                vec[1].iov_base = " ";
-                vec[1].iov_len = 1;
-
+                const char *status_str = "500 Internal Server Error";
                 switch (response.status) {
                 case HTTP_OK:
-                  vec[2].iov_base = "200";
-                  vec[2].iov_len = 3;
-                  vec[3].iov_base = " OK";
-                  vec[3].iov_len = 3;
+                  status_str = "200 OK";
                   break;
                 case HTTP_BAD_REQUEST:
-                  vec[2].iov_base = "400";
-                  vec[2].iov_len = 3;
-                  vec[3].iov_base = " Bad Request";
-                  vec[3].iov_len = 12;
+                  status_str = "400 Bad Request";
                   break;
                 case HTTP_NOT_FOUND:
-                  vec[2].iov_base = "404";
-                  vec[2].iov_len = 3;
-                  vec[3].iov_base = " Not Found";
-                  vec[3].iov_len = 10;
+                  status_str = "404 Not Found";
                   break;
-                default:
-                  vec[2].iov_base = "500";
-                  vec[2].iov_len = 3;
-                  vec[3].iov_base = " Internal Error";
-                  vec[3].iov_len = 15;
+                case HTTP_VERSION_NOT_SUPPORTED:
+                  status_str = "505 HTTP Version Not Supported";
                   break;
                 }
 
-                vec[4].iov_base = "\r\nContent-Length: 0\r\n\r\n";
-                vec[4].iov_len = 23;
+                int header_len = snprintf(header_buffer, HTTP_MAX_BUFFER_SIZE,
+                                          "%s %s\r\n"
+                                          "Content-Length: %zu\r\n"
+                                          "Content-Type: text/plain\r\n"
+                                          "\r\n", // End of headers
+                                          HTTP_SUPPORTED_VERSION, status_str,
+                                          response.body_length);
 
-                writev(cd, vec, 5);
+                if (header_len < 0 || header_len >= HTTP_MAX_BUFFER_SIZE) {
+                  fprintf(stderr, "Error: Header too long!\n");
+                }
+
+                vec[0].iov_base = header_buffer;
+                vec[0].iov_len = (size_t)header_len;
+
+                if (response.body_length > 0) {
+                  vec[1].iov_base = (void *)response.body;
+                  vec[1].iov_len = response.body_length;
+                  writev(cd, vec, 2);
+                } else {
+                  writev(cd, vec, 1);
+                }
               }
             }
           }
