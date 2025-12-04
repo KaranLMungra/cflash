@@ -9,6 +9,8 @@
 #define REAL_JSON_BUFFER 20480
 static char real_json[REAL_JSON_BUFFER] = {0};
 static size_t real_json_length = 0;
+static const char *hello_world = "Hello, World!\n";
+static const size_t hello_world_length = 14;
 
 void http_handler(const struct HttpRequest *request) {
   struct HttpResponse response = {0};
@@ -24,6 +26,12 @@ void http_handler(const struct HttpRequest *request) {
     response.content = real_json;
     response.content_length = real_json_length;
     response.content_type = HTTP_APPLICATION_JSON;
+  } else if (request->method == HTTP_GET &&
+             (strncmp(request->path, "/", 1) == 0)) {
+    response.status = HTTP_OK;
+    response.content = hello_world;
+    response.content_length = hello_world_length;
+    response.content_type = HTTP_TEXT_PLAIN;
   } else {
     response.status = HTTP_BAD_REQUEST;
   }
